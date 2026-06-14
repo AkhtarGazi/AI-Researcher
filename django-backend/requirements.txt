@@ -1,0 +1,28 @@
+# Django Backend Dependencies
+django>=4.2,<5.0
+djangorestframework>=3.14
+django-cors-headers>=4.3
+channels>=4.0
+daphne>=4.0
+python-dotenv>=1.0
+
+# Research Agent Dependencies (shared)
+langchain
+langchain-core
+langchain-community
+langgraph
+mistralai
+langchain-mistralai
+tavily-python
+beautifulsoup4
+requests
+lxml
+pydantic
+aiohttp
+httpx
+tenacity
+rich
+orjson
+
+# PDF Export
+reportlab>=4.0
