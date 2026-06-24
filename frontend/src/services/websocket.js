@@ -1,6 +1,6 @@
 class ResearchWebSocket {
     constructor(taskId, onMessage, onOpen, onClose, onError) {
-        const wsBase = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
+        const wsBase = import.meta.env.VITE_WS_BASE_URL || 'ws://127.0.0.1:8000';
         this.url = `${wsBase}/ws/research/${taskId}/`;
         this.onMessage = onMessage;
         this.onOpen = onOpen;

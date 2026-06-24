@@ -1,114 +1,145 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useResearch } from '../context/ResearchContext';
 import ResearchForm from '../components/ResearchForm';
-import AgentStatusRail from '../components/AgentStatusRail';
 import ReportViewer from '../components/ReportViewer';
 import CritiquePanel from '../components/CritiquePanel';
-import AIOrb from '../components/AIOrb';
-import ReadingProgressBar from '../components/ReadingProgressBar';
+import NeuralCore from '../components/NeuralCore';
+import { exportReportPDF } from '../services/pdfExport';
+import { motion, AnimatePresence } from 'framer-motion';
+
+/* ── Map task status → neural core visual state ── */
+const getAgentState = (task) => {
+    if (!task) return 'idle';
+    switch (task.status) {
+        case 'running':
+        case 'queued': return 'running';
+        case 'completed': return 'completed';
+        case 'failed': return 'failed';
+        default: return 'idle';
+    }
+};
+
+/* ── State badge ── */
+const StateBadge = ({ status }) => {
+    const cfg = {
+        idle: { label: 'Ready', cls: 'state-idle' },
+        running: { label: 'Processing', cls: 'state-running' },
+        completed: { label: 'Completed', cls: 'state-completed' },
+        failed: { label: 'Failed', cls: 'state-failed' },
+    };
+    const { label, cls } = cfg[status] || cfg.idle;
+    return <span className={`agent-state-badge ${cls}`}>{label}</span>;
+};
 
 const HomePage = () => {
-    const { currentTask, loading, error, prefs, updatePrefs, cancelResearch } = useResearch();
-    const [readingProgress, setReadingProgress] = useState(0);
+    const { currentTask } = useResearch();
 
-    // Monitor workspace scroll for reading progress
-    useEffect(() => {
-        const workspace = document.querySelector('.main-workspace');
-        if (!workspace) return;
+    const status = currentTask?.status || 'idle';
+    const isIdle = !currentTask || status === 'cancelled';
+    const isRunning = status === 'running' || status === 'queued';
+    const isCompleted = status === 'completed';
+    const isFailed = status === 'failed';
 
-        const handleScroll = () => {
-            const winScroll = workspace.scrollTop;
-            const height = workspace.scrollHeight - workspace.clientHeight;
-            const scrolled = (winScroll / height) * 100;
-            setReadingProgress(scrolled);
-        };
-
-        workspace.addEventListener('scroll', handleScroll);
-        return () => workspace.removeEventListener('scroll', handleScroll);
-    }, [currentTask]);
-
-    const getProcessingStep = () => {
-        if (!currentTask || currentTask.status !== 'running') return 'pending';
-        const runningStep = currentTask.steps?.find(s => s.status === 'running');
-        return runningStep ? runningStep.step_name : 'pending';
+    const handleExportPDF = async () => {
+        if (!currentTask?.report) return;
+        try {
+            await exportReportPDF(currentTask);
+        } catch (err) {
+            console.error('PDF export failed:', err);
+        }
     };
 
     return (
-        <div className="workspace-content animate-fade-in">
-            {/* Search Input Area */}
-            {(!currentTask || currentTask.status === 'completed' || currentTask.status === 'failed' || currentTask.status === 'cancelled') && (
-                <section style={{ marginBottom: '40px' }}>
-                    <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '24px', textAlign: 'center' }}>
-                        New Research Task
-                    </h1>
-                    <ResearchForm />
-                </section>
-            )}
+        <>
+            <div className="right-panel-content">
+                <AnimatePresence mode="wait">
 
-            {/* Progress & Results Area */}
-            {(currentTask || loading) && (
-                <div className="workspace-results">
-                    {/* Persistent Status Rail */}
-                    <AgentStatusRail steps={currentTask?.steps} />
-
-                    {/* Central AI Orb (Jarvis Style) */}
-                    {(currentTask?.status === 'running' || currentTask?.status === 'queued') && (
-                        <div className="jarvis-container">
-                            <AIOrb state={getProcessingStep()} />
-                        </div>
+                    {/* ── Idle / Welcome ── */}
+                    {isIdle && (
+                        <motion.div key="welcome" className="welcome-state"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            transition={{ duration: 0.5 }}>
+                            <NeuralCore agentState="idle" />
+                            <StateBadge status="idle" />
+                            <div className="welcome-text">
+                                <h1 className="welcome-title">AI Research Workspace</h1>
+                                <p className="welcome-subtitle">
+                                    Multiple AI agents working in parallel to search, read, analyze, and generate comprehensive research reports.
+                                </p>
+                            </div>
+                        </motion.div>
                     )}
 
-                    {/* Report Viewer (Replaces Orb) */}
-                    {currentTask?.status === 'completed' && (
-                        <div style={{ marginTop: '20px' }}>
-                            <div className="action-bar" style={{ position: 'static', background: 'transparent', border: 'none', padding: '0 0 20px', display: 'flex', justifyContent: 'space-between' }}>
-                                <div className="view-toggle" style={{ margin: 0 }}>
-                                    <button
-                                        className={`view-toggle-btn ${prefs.viewMode === 'card' ? 'active' : ''}`}
-                                        onClick={() => updatePrefs({ viewMode: 'card' })}
-                                    >
-                                        Cards
-                                    </button>
-                                    <button
-                                        className={`view-toggle-btn ${prefs.viewMode === 'document' ? 'active' : ''}`}
-                                        onClick={() => updatePrefs({ viewMode: 'document' })}
-                                    >
-                                        Document
-                                    </button>
+                    {/* ── Running ── */}
+                    {isRunning && (
+                        <motion.div key="running" className="welcome-state"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.6 }}>
+                            <NeuralCore agentState="running" />
+                            <StateBadge status="running" />
+                            <div className="welcome-text">
+                                <h1 className="welcome-title">Researching…</h1>
+                                <p className="welcome-subtitle">
+                                    {currentTask?.topic || 'AI agents are actively processing your research task'}
+                                </p>
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* ── Completed ── */}
+                    {isCompleted && (
+                        <motion.div key="report" className="report-area"
+                            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.6, ease: 'easeOut' }}>
+
+                            <div className="report-header">
+                                <div className="report-header-left">
+                                    <NeuralCore agentState="completed" />
+                                    <div>
+                                        <h2 className="report-title">{currentTask?.topic}</h2>
+                                        <StateBadge status="completed" />
+                                    </div>
                                 </div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button className="btn-secondary btn-sm" onClick={() => window.print()}>Export PDF</button>
-                                    <button className="btn-secondary btn-sm" onClick={() => {
-                                        navigator.clipboard.writeText(currentTask.report.full_text);
-                                    }}>Copy MD</button>
+                                <div className="report-actions">
+                                    <button className="btn-ghost" onClick={handleExportPDF}>
+                                        ⬇ Download PDF
+                                    </button>
+                                    <button className="btn-ghost" onClick={() => {
+                                        const text = currentTask?.report?.full_text || '';
+                                        if (text) navigator.clipboard.writeText(text);
+                                    }}>
+                                        Copy MD
+                                    </button>
                                 </div>
                             </div>
 
-                            <ReportViewer
-                                report={currentTask.report}
-                                viewMode={prefs.viewMode}
-                            />
-
-                            <CritiquePanel critique={currentTask.critique} />
-                        </div>
+                            <ReportViewer report={currentTask?.report} />
+                            <CritiquePanel critique={currentTask?.critique} />
+                        </motion.div>
                     )}
 
-                    {/* Error State */}
-                    {currentTask?.status === 'failed' && (
-                        <div className="workspace-card" style={{ borderColor: 'var(--error)', textAlign: 'center' }}>
-                            <h3 style={{ color: 'var(--error)', marginBottom: '12px' }}>Research Failure</h3>
-                            <p style={{ color: 'var(--text-secondary)' }}>{currentTask.error_message}</p>
-                            <button className="btn-primary" style={{ marginTop: '20px' }} onClick={() => window.location.reload()}>Retry</button>
-                        </div>
+                    {/* ── Failed ── */}
+                    {isFailed && (
+                        <motion.div key="error" className="welcome-state"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                            transition={{ duration: 0.4 }}>
+                            <NeuralCore agentState="failed" />
+                            <StateBadge status="failed" />
+                            <div className="error-card">
+                                <h3>Research Failed</h3>
+                                <p>{currentTask?.error_message || 'An unexpected error occurred.'}</p>
+                                <button className="btn-primary" onClick={() => window.location.reload()}>
+                                    Try Again
+                                </button>
+                            </div>
+                        </motion.div>
                     )}
-                </div>
-            )}
 
-            {/* Bottom Progress (only for completed reports) */}
-            {currentTask?.status === 'completed' && (
-                <ReadingProgressBar progress={readingProgress} />
-            )}
-        </div>
+                </AnimatePresence>
+            </div>
+
+            <ResearchForm />
+        </>
     );
 };
 

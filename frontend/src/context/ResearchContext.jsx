@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { researchService } from '../services/api';
 import { storageService } from '../services/storage';
 import ResearchWebSocket from '../services/websocket';
@@ -16,15 +16,37 @@ export const ResearchProvider = ({ children }) => {
     const [wsConnection, setWsConnection] = useState(null);
     const [prefs, setPrefs] = useState(storageService.getPrefs());
 
-    // Global Toast State
+    // Theme (dark / light)
+    const [theme, setTheme] = useState(() => {
+        const saved = localStorage.getItem('ai-research-theme');
+        return saved || 'dark';
+    });
+
+    useEffect(() => {
+        document.documentElement.dataset.theme = theme;
+        localStorage.setItem('ai-research-theme', theme);
+    }, [theme]);
+
+    const toggleTheme = useCallback(() => {
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+    }, []);
+
+    // Global Toast State — with dedup
     const [toasts, setToasts] = useState([]);
-    const addToast = (message, type = 'info') => {
-        const id = Date.now();
+    const seenEventKeys = useRef(new Set());
+
+    const addToast = useCallback((message, type = 'info', dedupKey = null) => {
+        // If a dedupKey is provided, only fire once per task session
+        if (dedupKey) {
+            if (seenEventKeys.current.has(dedupKey)) return;
+            seenEventKeys.current.add(dedupKey);
+        }
+        const id = Date.now() + Math.random();
         setToasts(prev => [...prev, { id, message, type }]);
         setTimeout(() => {
             setToasts(prev => prev.filter(t => t.id !== id));
         }, 5000);
-    };
+    }, []);
 
     const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
@@ -52,26 +74,39 @@ export const ResearchProvider = ({ children }) => {
         setLoading(true);
         setError(null);
         setCurrentTask(null);
+        seenEventKeys.current = new Set(); // reset dedup on new task
+
+        console.log('[Research] Starting research for topic:', topic);
 
         try {
+            console.log('[Research] Calling researchService.create...');
             const response = await researchService.create(topic);
+            console.log('[Research] Create response:', response);
+
             const taskId = response.data.task_id;
+            console.log('[Research] Task ID:', taskId);
 
             // Update local recent topics
             const updatedTopics = storageService.saveRecentTopic(topic);
             setRecentTopics(updatedTopics);
 
             // Start fetching full task data
+            console.log('[Research] Fetching full task data...');
             const taskRes = await researchService.get(taskId);
+            console.log('[Research] Task data:', taskRes);
             setCurrentTask(taskRes.data);
 
             // Connect WebSocket
+            console.log('[Research] Connecting WebSocket...');
             const ws = new ResearchWebSocket(
                 taskId,
                 (message) => handleWsMessage(message),
-                () => console.log('Research WS Connected'),
-                () => console.log('Research WS Disconnected'),
-                (err) => addToast('WebSocket connection error', 'error')
+                () => console.log('[Research] WebSocket connected'),
+                () => console.log('[Research] WebSocket disconnected'),
+                (err) => {
+                    console.error('[Research] WebSocket error:', err);
+                    addToast('WebSocket connection error', 'error');
+                }
             );
             ws.connect();
             setWsConnection(ws);
@@ -79,6 +114,8 @@ export const ResearchProvider = ({ children }) => {
             addToast(`Research started: ${topic}`, 'info');
             return taskId;
         } catch (err) {
+            console.error('[Research] ✕ Failed to start research:', err);
+            console.error('[Research] Error details:', JSON.stringify(err, null, 2));
             setError(err);
             addToast(err.message || 'Failed to start research', 'error');
             throw err;
@@ -86,6 +123,7 @@ export const ResearchProvider = ({ children }) => {
             setLoading(false);
         }
     };
+
 
     const handleWsMessage = (message) => {
         const { type, data } = message;
@@ -97,31 +135,32 @@ export const ResearchProvider = ({ children }) => {
             if (type === 'research_started') {
                 updated.status = 'running';
             } else if (type === 'step_update') {
-                // Find existing step or add new
-                const stepIdx = updated.steps.findIndex(s => s.step_name === data.step);
+                const stepIdx = updated.steps?.findIndex(s => s.step_name === data.step) ?? -1;
+                const newStep = { step_name: data.step, status: data.status, timestamp: new Date().toISOString() };
                 if (stepIdx !== -1) {
-                    updated.steps[stepIdx] = { ...updated.steps[stepIdx], status: data.status };
+                    updated.steps = updated.steps.map((s, i) => i === stepIdx ? { ...s, status: data.status } : s);
                 } else {
-                    updated.steps.push({ step_name: data.step, status: data.status, timestamp: new Date().toISOString() });
+                    updated.steps = [...(updated.steps || []), newStep];
                 }
             } else if (type === 'search_completed') {
                 updated.search_results = data.result || updated.search_results;
-                addToast('Web search complete', 'success');
+                addToast('✓ Web search complete', 'success', 'search_completed');
             } else if (type === 'scraping_completed') {
                 updated.scraped_content = data.result || updated.scraped_content;
-                addToast('Scraping complete', 'success');
+                addToast('✓ Content extracted', 'success', 'scraping_completed');
             } else if (type === 'report_generated') {
-                addToast('Report generated', 'success');
-                // We'll fetch full data at completion for consistency
+                addToast('✓ Report generated', 'success', 'report_generated');
+            } else if (type === 'critique_completed') {
+                addToast('✓ Quality review complete', 'success', 'critique_completed');
             } else if (type === 'research_completed') {
                 updated.status = 'completed';
-                addToast('Research completed successfully!', 'success');
+                addToast('🎉 Research completed!', 'success', 'research_completed');
                 refreshCurrentTask(prev.id);
                 fetchHistory();
             } else if (type === 'research_failed') {
                 updated.status = 'failed';
                 updated.error_message = data.message;
-                addToast(`Research failed: ${data.message}`, 'error');
+                addToast(`Research failed: ${data.message}`, 'error', 'research_failed');
                 refreshCurrentTask(prev.id);
             }
 
@@ -163,7 +202,9 @@ export const ResearchProvider = ({ children }) => {
         toasts,
         removeToast,
         refreshCurrentTask,
-        fetchHistory
+        fetchHistory,
+        theme,
+        toggleTheme,
     };
 
     return (

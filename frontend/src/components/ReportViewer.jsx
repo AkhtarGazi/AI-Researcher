@@ -1,89 +1,167 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
-const ReportCard = ({ title, icon, iconClass, children, defaultExpanded = true }) => {
-    const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+/* ── Safe Markdown Renderer ── */
+const MD = ({ children }) => {
+    if (!children || typeof children !== 'string') return null;
+    return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {children}
+        </ReactMarkdown>
+    );
+};
+
+/* ── Collapsible Report Section ── */
+const ReportSection = ({ icon, label, accentColor, defaultOpen = true, children }) => {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <section className="nb-section">
+            <button
+                className="nb-section-header"
+                onClick={() => setOpen(o => !o)}
+                aria-expanded={open}
+            >
+                <span className="nb-section-icon" style={{ background: accentColor + '22', color: accentColor }}>
+                    {icon}
+                </span>
+                <span className="nb-section-label">{label}</span>
+                <span className={`nb-section-chevron ${open ? 'open' : ''}`}>›</span>
+            </button>
+            {open && (
+                <div className="nb-section-body">
+                    {children}
+                </div>
+            )}
+        </section>
+    );
+};
+
+/* ── Source Card ── */
+const SourceItem = ({ source, index }) => {
+    // source may be a string (URL or plain text) or an object { url, title }
+    const url = typeof source === 'object' ? source.url : source;
+    const title = typeof source === 'object' ? source.title : null;
+    const isUrl = /^https?:\/\//.test(url);
 
     return (
-        <div className={`glass-card report-card animate-fade-in`}>
-            <div className="report-card-header">
-                <div className="report-card-title">
-                    <div className={`report-card-icon ${iconClass}`}>{icon}</div>
-                    {title}
-                </div>
-                <button
-                    className="btn-ghost btn-sm"
-                    onClick={() => setIsExpanded(!isExpanded)}
+        <div className="nb-source-item">
+            <span className="nb-source-num">{index + 1}</span>
+            {isUrl ? (
+                <a
+                    href={url}
+                    className="nb-source-link"
+                    target="_blank"
+                    rel="noopener noreferrer"
                 >
-                    {isExpanded ? 'Collapse' : 'Expand'}
-                </button>
-            </div>
-            <div className={`report-card-body ${!isExpanded ? 'collapsed' : ''}`}>
-                {children}
-            </div>
-            {!isExpanded && (
-                <button className="expand-btn" onClick={() => setIsExpanded(true)}>
-                    Read full section
-                </button>
+                    {title || url}
+                </a>
+            ) : (
+                <span className="nb-source-text">{title || url}</span>
             )}
         </div>
     );
 };
 
-const ReportViewer = ({ report, viewMode }) => {
+/* ── Parse source lines from a raw sources string ── */
+const parseSources = (raw) => {
+    if (!raw || typeof raw !== 'string') return [];
+    return raw
+        .split('\n')
+        .map(line => line.trim().replace(/^[-*\d.]+\s*/, ''))
+        .filter(Boolean);
+};
+
+/* ── Main ReportViewer ── */
+const ReportViewer = ({ report }) => {
     if (!report) return null;
 
-    const { introduction, findings, conclusion, sources, full_text } = report;
+    const {
+        summary,
+        introduction,
+        findings,
+        sections,       // may be an array of { title, body } objects
+        conclusion,
+        sources,        // string (raw) or array
+        full_text,
+    } = report;
 
-    if (viewMode === 'card') {
-        return (
-            <div className="report-cards">
-                {introduction && (
-                    <ReportCard title="Introduction" icon="📝" iconClass="intro">
-                        <div dangerouslySetInnerHTML={{ __html: introduction.replace(/\n/g, '<br/>') }} />
-                    </ReportCard>
-                )}
-                {findings && (
-                    <ReportCard title="Key Findings" icon="💡" iconClass="findings">
-                        <div dangerouslySetInnerHTML={{ __html: findings.replace(/\n/g, '<br/>') }} />
-                    </ReportCard>
-                )}
-                {conclusion && (
-                    <ReportCard title="Conclusion" icon="🎯" iconClass="conclusion">
-                        <div dangerouslySetInnerHTML={{ __html: conclusion.replace(/\n/g, '<br/>') }} />
-                    </ReportCard>
-                )}
-                {sources && (
-                    <ReportCard title="Sources & References" icon="📚" iconClass="sources" defaultExpanded={false}>
-                        <div dangerouslySetInnerHTML={{ __html: sources.replace(/\n/g, '<br/>') }} />
-                    </ReportCard>
-                )}
-            </div>
-        );
-    }
+    const sourceList = Array.isArray(sources)
+        ? sources
+        : parseSources(sources);
 
-    // Document View
+    const summaryText = summary || introduction || '';
+    const findingsText = findings || '';
+
     return (
-        <div className="document-view animate-slide-up">
-            <div className="markdown-content">
-                {/* Simple markdown-to-html like rendering for the full text */}
-                {full_text.split('\n\n').map((para, i) => {
-                    if (para.startsWith('##')) {
-                        return <h2 key={i}>{para.replace('##', '').trim()}</h2>;
-                    } else if (para.startsWith('#')) {
-                        return <h1 key={i}>{para.replace('#', '').trim()}</h1>;
-                    } else if (para.startsWith('- ') || para.startsWith('* ')) {
-                        return (
-                            <ul key={i}>
-                                {para.split('\n').map((li, j) => (
-                                    <li key={j}>{li.replace(/^[-*]\s+/, '')}</li>
-                                ))}
-                            </ul>
-                        );
-                    }
-                    return <p key={i} dangerouslySetInnerHTML={{ __html: para.replace(/\n/g, '<br/>') }} />;
-                })}
-            </div>
-        </div>
+        <article className="nb-report">
+            {/* ── Summary / Introduction ── */}
+            {summaryText && (
+                <ReportSection icon="📋" label="Summary" accentColor="var(--primary)" defaultOpen>
+                    <div className="nb-prose">
+                        <MD>{summaryText}</MD>
+                    </div>
+                </ReportSection>
+            )}
+
+            {/* ── Sections (structured array) ── */}
+            {Array.isArray(sections) && sections.length > 0 && sections.map((sec, i) => (
+                <ReportSection
+                    key={i}
+                    icon="🔍"
+                    label={sec.title || `Section ${i + 1}`}
+                    accentColor="var(--accent)"
+                    defaultOpen={i === 0}
+                >
+                    <div className="nb-prose">
+                        <MD>{sec.body || sec.content || ''}</MD>
+                    </div>
+                </ReportSection>
+            ))}
+
+            {/* ── Key Findings (flat string) ── */}
+            {!Array.isArray(sections) && findingsText && (
+                <ReportSection icon="💡" label="Key Findings" accentColor="var(--accent)" defaultOpen>
+                    <div className="nb-prose">
+                        <MD>{findingsText}</MD>
+                    </div>
+                </ReportSection>
+            )}
+
+            {/* ── Conclusion ── */}
+            {conclusion && (
+                <ReportSection icon="🎯" label="Conclusion" accentColor="#10B981" defaultOpen>
+                    <div className="nb-prose">
+                        <MD>{conclusion}</MD>
+                    </div>
+                </ReportSection>
+            )}
+
+            {/* ── Sources ── */}
+            {sourceList.length > 0 && (
+                <ReportSection
+                    icon="📚"
+                    label={`Sources & References (${sourceList.length})`}
+                    accentColor="#F59E0B"
+                    defaultOpen={false}
+                >
+                    <div className="nb-sources-list">
+                        {sourceList.map((src, i) => (
+                            <SourceItem key={i} source={src} index={i} />
+                        ))}
+                    </div>
+                </ReportSection>
+            )}
+
+            {/* ── Fallback: full_text if no structured data ── */}
+            {!summaryText && !findingsText && !conclusion && full_text && (
+                <ReportSection icon="📄" label="Full Report" accentColor="var(--primary)" defaultOpen>
+                    <div className="nb-prose">
+                        <MD>{full_text}</MD>
+                    </div>
+                </ReportSection>
+            )}
+        </article>
     );
 };
 

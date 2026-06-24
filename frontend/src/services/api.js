@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://127.0.0.1:8000`;
+
+console.log('[API] Base URL:', API_BASE_URL);
 
 const apiClient = axios.create({
     baseURL: `${API_BASE_URL}/api`,
@@ -10,6 +12,39 @@ const apiClient = axios.create({
     },
 });
 
+// Request interceptor — log every outgoing request
+apiClient.interceptors.request.use(
+    (config) => {
+        console.log(`[API] → ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.data || '');
+        return config;
+    },
+    (error) => {
+        console.error('[API] Request setup error:', error);
+        return Promise.reject(error);
+    }
+);
+
+// Response interceptor — log every incoming response
+apiClient.interceptors.response.use(
+    (response) => {
+        console.log(`[API] ← ${response.status} ${response.config.url}`, response.data);
+        return response;
+    },
+    (error) => {
+        if (error.response) {
+            console.error(`[API] ← ${error.response.status} ${error.config?.url}`, error.response.data);
+        } else if (error.request) {
+            console.error(`[API] ✕ No response for ${error.config?.method?.toUpperCase()} ${error.config?.baseURL}${error.config?.url}`, {
+                message: error.message,
+                code: error.code,
+            });
+        } else {
+            console.error('[API] ✕ Request error:', error.message);
+        }
+        return Promise.reject(error);
+    }
+);
+
 // Standard response wrapper to match Django API
 const handleResponse = async (promise) => {
     try {
@@ -18,23 +53,29 @@ const handleResponse = async (promise) => {
     } catch (error) {
         if (error.response) {
             // Server responded with an error
-            throw error.response.data.error || {
+            const serverError = error.response.data?.error || {
                 code: 'API_ERROR',
-                message: error.response.data.message || 'An unexpected error occurred',
-                details: error.response.data.details
+                message: error.response.data?.message || `Server error ${error.response.status}`,
+                details: error.response.data?.details
             };
+            console.error('[API] Server error:', serverError);
+            throw serverError;
         } else if (error.request) {
             // Request was made but no response received
-            throw {
+            const networkError = {
                 code: 'NETWORK_ERROR',
-                message: 'No response from server. Please check your connection.',
+                message: `No response from server (${error.code || 'unknown'}). Backend may not be running at ${API_BASE_URL}`,
             };
+            console.error('[API] Network error:', networkError, '\nOriginal:', error.message);
+            throw networkError;
         } else {
             // Something else happened
-            throw {
+            const clientError = {
                 code: 'CLIENT_ERROR',
                 message: error.message,
             };
+            console.error('[API] Client error:', clientError);
+            throw clientError;
         }
     }
 };
